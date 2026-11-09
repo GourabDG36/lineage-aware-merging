@@ -1,0 +1,100 @@
+{
+  "description": "Objective 1 (CPU notebook, no GPU): infer the family tree of 10 checkpoints from weights only, check it against the model cards, and choose the merge reference for every merge set. ~30 GB of downloads.",
+  "models": {
+    "base": "Qwen/Qwen2.5-1.5B",
+    "instruct": "Qwen/Qwen2.5-1.5B-Instruct",
+    "qwq": "micaebe/Qwen2.5-1.5B-Instruct-QwQ",
+    "mbpp": "jahyungu/Qwen2.5-1.5B-Instruct_mbpp",
+    "business": "joyboy5656n/business-assistant-llm",
+    "legal": "Farhanabdul12/legal-qwen2.5-1.5b-finetuned",
+    "coder_base": "Qwen/Qwen2.5-Coder-1.5B",
+    "coder": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+    "math_base": "Qwen/Qwen2.5-Math-1.5B",
+    "math": "Qwen/Qwen2.5-Math-1.5B-Instruct"
+  },
+  "lineage": {
+    "pool": [
+      "base",
+      "instruct",
+      "qwq",
+      "mbpp",
+      "business",
+      "legal",
+      "coder_base",
+      "coder",
+      "math_base",
+      "math"
+    ],
+    "true_parent": {
+      "instruct": "base",
+      "qwq": "instruct",
+      "mbpp": "instruct",
+      "business": "instruct",
+      "legal": "instruct",
+      "coder_base": "base",
+      "coder": "coder_base",
+      "math_base": "base",
+      "math": "math_base"
+    },
+    "true_parent_note": "From the Hugging Face model cards and the Qwen2.5-Coder / Qwen2.5-Math reports (both initialised from Qwen2.5). legal was trained on the 4-bit quantised Instruct; Instruct is its closest checkpoint in the pool.",
+    "generalization": [
+      "base",
+      "coder_base",
+      "math_base"
+    ],
+    "conventional_reference": "base",
+    "threshold": 0.1,
+    "tie": 0.05,
+    "merge_sets": [
+      [
+        "qwq",
+        "mbpp"
+      ],
+      [
+        "qwq",
+        "business"
+      ],
+      [
+        "qwq",
+        "legal"
+      ],
+      [
+        "mbpp",
+        "business"
+      ],
+      [
+        "mbpp",
+        "legal"
+      ],
+      [
+        "business",
+        "legal"
+      ],
+      [
+        "qwq",
+        "mbpp",
+        "business"
+      ],
+      [
+        "coder",
+        "instruct"
+      ],
+      [
+        "coder",
+        "math"
+      ],
+      [
+        "coder",
+        "qwq"
+      ],
+      [
+        "math",
+        "instruct"
+      ],
+      [
+        "math",
+        "mbpp"
+      ]
+    ]
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "description": "Phase 2, GPU notebook: evaluate business and legal, merge the five pairs of Instruct fine-tunes with TA and TIES, and four mixed pairs (one model far from the base, one near it) with TA against the base.",
+  "limit": 200,
+  "tasks": [
+    "gsm8k",
+    "mbpp"
+  ],
+  "models": {
+    "base": "Qwen/Qwen2.5-1.5B",
+    "instruct": "Qwen/Qwen2.5-1.5B-Instruct",
+    "qwq": "micaebe/Qwen2.5-1.5B-Instruct-QwQ",
+    "mbpp": "jahyungu/Qwen2.5-1.5B-Instruct_mbpp",
+    "coder": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+    "math": "Qwen/Qwen2.5-Math-1.5B-Instruct",
+    "business": "joyboy5656n/business-assistant-llm",
+    "legal": "Farhanabdul12/legal-qwen2.5-1.5b-finetuned"
+  },
+  "steps": [
+    {
+      "type": "eval",
+      "model": "business"
+    },
+    {
+      "type": "eval",
+      "model": "legal"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "business"
+      ],
+      "method": "ta"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "business"
+      ],
+      "method": "ties"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "legal"
+      ],
+      "method": "ta"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "legal"
+      ],
+      "method": "ties"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "mbpp",
+        "business"
+      ],
+      "method": "ta"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "mbpp",
+        "business"
+      ],
+      "method": "ties"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "mbpp",
+        "legal"
+      ],
+      "method": "ta"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "mbpp",
+        "legal"
+      ],
+      "method": "ties"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "business",
+        "legal"
+      ],
+      "method": "ta"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "business",
+        "legal"
+      ],
+      "method": "ties"
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "coder",
+        "qwq"
+      ],
+      "method": "ta",
+      "tokenizer_from": "instruct"
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "math",
+        "mbpp"
+      ],
+      "method": "ta",
+      "tokenizer_from": "instruct"
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "coder",
+        "instruct"
+      ],
+      "method": "ta",
+      "tokenizer_from": "instruct"
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "math",
+        "instruct"
+      ],
+      "method": "ta",
+      "tokenizer_from": "instruct"
+    }
+  ]
+}

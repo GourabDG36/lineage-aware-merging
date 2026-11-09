@@ -1,0 +1,10 @@
+numpy
+safetensors
+torch
+huggingface_hub
+pyyaml
+# evaluation only
+transformers
+datasets
+# tests
+pytest
