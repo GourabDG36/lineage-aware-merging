@@ -1,9 +1,0 @@
-# Coder and Instruct: no common ancestor is close enough (our result: 0.0/0.0 when averaged).
-merge_method: task_arithmetic
-base_model: Qwen/Qwen2.5-1.5B
-models:
-  - model: Qwen/Qwen2.5-Coder-1.5B-Instruct
-    parameters: {weight: 0.5}
-  - model: Qwen/Qwen2.5-1.5B-Instruct
-    parameters: {weight: 0.5}
-dtype: bfloat16
