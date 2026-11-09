@@ -1,0 +1,141 @@
+{
+  "description": "Phase 1: baselines, one healthy pair (qwq + mbpp, fine-tunes of Instruct) merged five ways, the re-basing test, and the likely-destructive pair (coder + math against the base). (The base model is used only as a reference and is not evaluated: it is not chat-tuned and degenerates on chat prompts in any number format.)",
+  "limit": 200,
+  "tasks": [
+    "gsm8k",
+    "mbpp"
+  ],
+  "models": {
+    "base": "Qwen/Qwen2.5-1.5B",
+    "instruct": "Qwen/Qwen2.5-1.5B-Instruct",
+    "qwq": "micaebe/Qwen2.5-1.5B-Instruct-QwQ",
+    "mbpp": "jahyungu/Qwen2.5-1.5B-Instruct_mbpp",
+    "coder": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+    "math": "Qwen/Qwen2.5-Math-1.5B-Instruct"
+  },
+  "steps": [
+    {
+      "type": "eval",
+      "model": "instruct"
+    },
+    {
+      "type": "eval",
+      "model": "qwq"
+    },
+    {
+      "type": "eval",
+      "model": "mbpp"
+    },
+    {
+      "type": "predict",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "mbpp"
+      ]
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "mbpp"
+      ],
+      "method": "ta"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "mbpp"
+      ],
+      "method": "ta",
+      "lam": 1.0
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "mbpp"
+      ],
+      "method": "ties"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "mbpp"
+      ],
+      "method": "dare"
+    },
+    {
+      "type": "merge",
+      "reference": "instruct",
+      "models": [
+        "qwq",
+        "mbpp"
+      ],
+      "method": "iso_c"
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "qwq",
+        "mbpp"
+      ],
+      "method": "ta",
+      "lam": 1.0,
+      "tokenizer_from": "instruct"
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "qwq",
+        "mbpp"
+      ],
+      "method": "ties",
+      "tokenizer_from": "instruct"
+    },
+    {
+      "type": "eval",
+      "model": "coder"
+    },
+    {
+      "type": "eval",
+      "model": "math"
+    },
+    {
+      "type": "predict",
+      "reference": "base",
+      "models": [
+        "coder",
+        "math"
+      ]
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "coder",
+        "math"
+      ],
+      "method": "ta",
+      "tokenizer_from": "instruct"
+    },
+    {
+      "type": "merge",
+      "reference": "base",
+      "models": [
+        "coder",
+        "math"
+      ],
+      "method": "ties",
+      "tokenizer_from": "instruct"
+    }
+  ]
+}
