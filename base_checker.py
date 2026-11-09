@@ -260,8 +260,12 @@ def render(rep):
                      + (f", from declared base {rep['task_vector_cos_from_declared_base']:.3f}"
                         if rep.get("task_vector_cos_from_declared_base") is not None else "")
                      + "  (near 1 = shared update counted again; near 0 = independent)")
-    lines.append(f"Weights sum to {rep['weights_sum']:g} (normalize: {rep['normalize']}); a shared "
-                 f"ancestor's update would be counted {rep['ancestor_update_counted_times']:g} times.")
+    if rep["verdict"] in ("WRONG_BASE", "WARNING") and rep["method_kind"] in ("sum", "trim"):
+        n = rep["ancestor_update_counted_times"]
+        lines.append(f"Weights sum to {rep['weights_sum']:g} (normalize: {rep['normalize']}): with the declared "
+                     f"base, the shared ancestor's update is added {n:g} time{'' if n == 1 else 's'}.")
+    else:
+        lines.append(f"Weights sum to {rep['weights_sum']:g} (normalize: {rep['normalize']}).")
     for n in rep["notes"]:
         lines.append(f"note: {n}")
     return "\n".join(lines)
