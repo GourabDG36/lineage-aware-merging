@@ -1,5 +1,7 @@
 # Lineage-Aware Model Merging for Large Language Models
 
+**Live demo:** https://huggingface.co/spaces/papachengo/base-checker
+
 Model merging combines several fine-tuned models into one, with no training and no data,
 by adding up each model's change from a **base model**. Every merging method and tool
 (including [mergekit](https://github.com/arcee-ai/mergekit)) takes that base as given:
