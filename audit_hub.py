@@ -218,6 +218,24 @@ class Ancestry:
 
     def __init__(self, client, depth=6):
         self.client, self.depth, self.memo = client, depth, {}
+        self.parent_memo, self.from_recipe = {}, set()
+
+    def parents(self, repo, meta):
+        """(relation, parents) from card metadata; if the card lists none, from the model's own
+        mergekit recipe (many community merges list their parents only there)."""
+        if repo in self.parent_memo:
+            return self.parent_memo[repo]
+        rel, parents = parents_from_meta(meta)
+        if not parents and hasattr(self.client, "recipe_text"):
+            r = parse_recipe(self.client.recipe_text(repo) or "")
+            if r is not None:
+                found = [i for i, _ in r["ingredients"]] + ([r["base"]] if r["base"] else [])
+                found = sorted(set(found) - {repo})
+                if found:
+                    rel, parents = ("merge" if len(found) > 1 else "finetune"), found
+                    self.from_recipe.add(repo)
+        self.parent_memo[repo] = (rel, parents)
+        return rel, parents
 
     def ancestors(self, repo, _stack=()):
         if repo in self.memo:
@@ -228,7 +246,7 @@ class Ancestry:
         if meta is None:
             self.memo[repo] = None
             return None
-        rel, parents = parents_from_meta(meta)
+        rel, parents = self.parents(repo, meta)
         out = {repo: 0}
         parent_sets = []
         for p in parents:
@@ -259,7 +277,7 @@ class Ancestry:
             memo[repo] = None
             return None
         out = set()
-        for p in parents_from_meta(meta)[1]:
+        for p in self.parents(repo, meta)[1]:
             out.add(p)
             out |= self.any_ancestors(p, _stack + (repo,)) or set()
         memo[repo] = out
@@ -341,6 +359,9 @@ def audit_one(repo, client, ancestry):
             row["notes"] = (row["notes"] + "; " if row["notes"] else "") + f"declared base is a re-upload of {base}"
     base_in_all = all(base in a for a in ancs)
     row["base_distance"] = max(a[base] for a in ancs) if base_in_all else ""
+    via = sorted(a for a in ancestry.from_recipe if any(a in an for an in ancs))
+    if via:
+        row["notes"] = (row["notes"] + "; " if row["notes"] else "") + "parents read from recipe: " + " ".join(via[:5])
     no_parents = [i for i, a in zip(ing, ancs) if len(a) == 1]
     if no_parents and (cca is None or not base_in_all):
         # an ingredient whose card lists no parent: a true root or missing metadata; cannot judge
