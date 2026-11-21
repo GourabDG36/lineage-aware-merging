@@ -62,13 +62,17 @@ def test_correct_base_is_ok(grams):
 
 def test_ties_wrong_base_is_only_a_warning(grams):
     rep = run(grams, cfg("ties", "base", ["qwq", "mbpp"], [1.0, 1.0], density=0.2), extra=["instruct"])
-    assert rep["verdict"] == "WARNING" and "trims" in rep["message"]
+    assert rep["verdict"] == "WARNING" and "normalisation" in rep["message"]   # mergekit normalises ties by default
+    rep = run(grams, cfg("dare_ties", "base", ["qwq", "mbpp"], [1.0, 1.0]), extra=["instruct"])
+    assert rep["verdict"] == "WRONG_BASE" and "no normalisation" in rep["message"]     # dare_ties does not
+    rep = run(grams, cfg("ties", "base", ["qwq", "mbpp"], [1.0, 1.0], normalize=False), extra=["instruct"])
+    assert rep["verdict"] == "WRONG_BASE"
 
 
 def test_normalised_weights_are_only_a_warning(grams):
     rep = run(grams, cfg("task_arithmetic", "base", ["qwq", "mbpp"], [0.5, 0.5]), extra=["instruct"])
     assert rep["ancestor_update_counted_times"] == 1.0
-    assert rep["verdict"] == "WARNING" and "normalised" in rep["message"]
+    assert rep["verdict"] == "WARNING" and "sum to 1" in rep["message"]
     rep = run(grams, cfg("task_arithmetic", "base", ["qwq", "mbpp"], [1.0, 1.0], normalize=True), extra=["instruct"])
     assert rep["verdict"] == "WARNING"
 

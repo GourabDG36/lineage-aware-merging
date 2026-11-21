@@ -19,9 +19,10 @@ Stage 1 (this script, CPU, text only, no model weights):
 Verdicts (task-vector methods with 2+ ingredients):
   OK                 declared base is the CCA
   DOUBLE_COUNT       the ingredients share a closer ancestor than the declared base, so
-                     every task vector carries that ancestor's update. Risk "high" for
-                     summing methods with total weight > 1.05 (as in our 6.5/0.0 merge),
-                     "lower" for TIES-style or normalised weights.
+                     every task vector carries that ancestor's update. Risk "high" when
+                     the method adds task vectors without normalisation and the weights
+                     sum to more than 1.05 (as in our 6.5/0.0 merge); "lower" when mergekit
+                     normalises (ties, della by default; sce always) or for model_stock.
   BASE_NOT_ANCESTOR  metadata says the declared base is not an ancestor of every ingredient
                      (re-uploads/mirrors of the same base also land here; see notes)
   NO_COMMON_ANCESTOR metadata gives the ingredients no shared ancestor
@@ -68,6 +69,8 @@ TASK_VECTOR = {
     "model_stock": "other",
 }
 PARENT_RELATIONS = ("finetune", "adapter", "quantized", "merge")
+# mergekit defaults (merge_methods/registry.py, checked 21 Nov 2026); sce always normalises
+NORMALIZE_DEFAULT = {"linear": True, "ties": True, "della": True, "sce": True}
 
 
 # ------------------------------------------------------------------ references and recipes
@@ -172,8 +175,8 @@ def parse_recipe(text):
             seen[rid] = len(ingredients)
             ingredients.append([rid, w])
     normalize = glob.get("normalize")
-    if normalize is None:
-        normalize = method == "linear"
+    if normalize is None or method == "sce":
+        normalize = NORMALIZE_DEFAULT.get(method, False)
     return {"method": method, "kind": TASK_VECTOR.get(method), "base": base, "base_note": base_note,
             "base_unresolved": base_raw.strip() if base is None and isinstance(base_raw, str) and base_raw.strip() else None,
             "ingredients": ingredients, "unresolved": unresolved, "normalize": bool(normalize),
@@ -483,7 +486,7 @@ def audit_one(repo, client, ancestry):
         row["verdict"] = "OK"
     elif base_in_all:
         row["verdict"] = "DOUBLE_COUNT"
-        row["risk"] = "high" if (r["kind"] == "sum" and counted > 1.05) else "lower"
+        row["risk"] = "high" if (r["kind"] in ("sum", "trim") and counted > 1.05) else "lower"
         row["shared_update_counted"] = round(counted, 3)
     else:
         row["verdict"] = "BASE_NOT_ANCESTOR"
@@ -634,7 +637,7 @@ def summarise(rows, out, sort, limit):
               f"- Merges using a task-vector method (TIES, task arithmetic, DARE, ...): {len(tv)}",
               f"- Of these, with 2+ ingredients and complete metadata (judged): {len(judged)}",
               f"- **DOUBLE_COUNT: {len(dc)} of {len(judged)} ({pct(len(dc), len(judged))})**, of which "
-              f"high risk (summing method, weights > 1): {len(high)}",
+              f"high risk (no normalisation, weights > 1): {len(high)}",
               f"- OK: {v.get('OK', 0)} ({pct(v.get('OK', 0), len(judged))}); base not an ancestor: "
               f"{v.get('BASE_NOT_ANCESTOR', 0)}; no common ancestor: {v.get('NO_COMMON_ANCESTOR', 0)}",
               f"- Not judged: incomplete lineage {v.get('INCOMPLETE_LINEAGE', 0)}, missing metadata {v.get('UNKNOWN', 0)}, "

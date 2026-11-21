@@ -52,6 +52,11 @@ METHODS = {
     "model_stock": "other", "nearswap": "other", "sce": "trim", "karcher": "none",
 }
 
+# mergekit's defaults (merge_methods/registry.py, checked 21 Nov 2026): ties and della divide the
+# agreeing task vectors by their summed weights unless told otherwise; linear normalises; sce always
+# normalises. Every other task-vector method adds them with the raw weights.
+NORMALIZE_DEFAULT = {"linear": True, "ties": True, "della": True, "sce": True}
+
 DEFAULT_GATE = 0.10      # max relative distance from the base (Phase M rule; strength sweep, 9 Nov)
 DEFAULT_COS = 0.30       # mean task-vector cosine above which a shared update is flagged
 
@@ -101,8 +106,8 @@ def parse_config(cfg):
     if not models:
         raise ValueError("config lists no models to merge")
     normalize = glob.get("normalize")
-    if normalize is None:
-        normalize = (method in ("linear",))
+    if normalize is None or method == "sce":
+        normalize = NORMALIZE_DEFAULT.get(method, False)
     return {"method": method, "kind": METHODS.get(method, "other"), "base": base,
             "models": models, "normalize": bool(normalize), "notes": notes}
 
@@ -222,17 +227,18 @@ def check(data, parsed, gate=DEFAULT_GATE, cos_thr=DEFAULT_COS):
     shared_txt = (f" Measured from {declared}, the task vectors have cosine {shared:.2f} "
                   f"(from {names[best]}: {rep['task_vector_cos_from_ancestor']:.2f})." if shared is not None and
                   rep["task_vector_cos_from_ancestor"] is not None else "")
-    if parsed["kind"] == "sum" and counted > 1.05 and (shared is None or shared > cos_thr):
+    if parsed["kind"] in ("sum", "trim") and counted > 1.05 and (shared is None or shared > cos_thr):
         rep["verdict"] = "WRONG_BASE"
         rep["message"] = (f"The merged models share a closer ancestor, {names[best]}. With base_model "
                           f"{declared}, every task vector contains that ancestor's own update, and "
-                          f"{parsed['method']} adds them with total weight {counted:g}, so the update is "
-                          f"counted {counted:g} times instead of once.{shared_txt} "
+                          f"{parsed['method']} adds them with total weight {counted:g} (no normalisation), so the "
+                          f"update is counted {counted:g} times instead of once.{shared_txt} "
                           f"Use base_model: {names[best]}.")
     else:
-        why = ("weights are normalised to sum to 1" if counted <= 1.05 and parsed["kind"] == "sum"
-               else f"{parsed['method']} trims and sign-votes task vectors, which removes much of a repeated update"
-               if parsed["kind"] == "trim" else f"the effect on {parsed['method']} was not measured")
+        why = (f"{parsed['method']} divides the task vectors by their summed weights (normalisation), so the shared "
+               f"update is added about once" if parsed["normalize"] and parsed["kind"] in ("sum", "trim")
+               else "the weights sum to 1 or less" if parsed["kind"] in ("sum", "trim")
+               else f"the effect on {parsed['method']} was not measured")
         rep["verdict"] = "WARNING"
         rep["message"] = (f"A closer common ancestor exists: {names[best]} (declared: {declared}). The risk is "
                           f"lower because {why}, but {names[best]} is still the better base.{shared_txt}")

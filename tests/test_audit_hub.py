@@ -91,7 +91,7 @@ def test_verdicts_cover_every_case():
         "m/norm": ("DOUBLE_COUNT", "lower"), "m/half": ("DOUBLE_COUNT", "lower"), "m/far": ("OK", None),
         "m/mirror": ("DOUBLE_COUNT", "high"), "m/mirror-ok": ("OK", None),
         "m/unrelated": ("BASE_NOT_ANCESTOR", None), "m/merged-ingredient": ("DOUBLE_COUNT", "high"),
-        "m/cardonly": ("DOUBLE_COUNT", "lower"), "m/unknown": ("UNKNOWN", None),
+        "m/cardonly": ("DOUBLE_COUNT", "high"), "m/unknown": ("UNKNOWN", None),
         "m/slerp": ("NOT_TASK_VECTOR", None), "m/single": ("SINGLE_INGREDIENT", None),
         "m/refs": ("OK", None), "m/multistage": ("DOUBLE_COUNT", "lower"),
         "m/no-common": ("INCOMPLETE_LINEAGE", None), "m/readme": ("DOUBLE_COUNT", "lower"),

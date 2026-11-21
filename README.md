@@ -40,7 +40,7 @@ prints one of:
 |---|---|
 | `OK` | `base_model` is the closest common ancestor |
 | `WRONG_BASE` | the models share a closer ancestor and the method adds task vectors with total weight > 1, so that ancestor's update is counted several times; `--out` writes a corrected config |
-| `WARNING` | a closer ancestor exists, but the method is less sensitive (TIES-style trimming, or weights summing to 1) |
+| `WARNING` | a closer ancestor exists, but the method normalises the weights (mergekit default for TIES and DELLA, always for SCE) or the weights sum to 1 or less |
 | `TOO_FAR` | even the best base is more than 10% away from a model: merging is unsafe from any base |
 | `INFO` | the method (linear, slerp) does not use the base for task vectors |
 
@@ -73,6 +73,11 @@ instant. Exit codes: 0 OK/INFO, 1 WARNING, 2 WRONG_BASE, 3 TOO_FAR.
 - **Distance gate:** stepping from Instruct towards Coder stays healthy up to 10%, degrades
   at 20%, fails at 30% and collapses at 50%.
 - 42 merges evaluated in total. Full tables: [`docs/RESULTS.md`](docs/RESULTS.md).
+- **Audit of 1,219 public merges on Hugging Face** ([`docs/AUDIT.md`](docs/AUDIT.md)): **23%** of the
+  checkable merges contain a hidden duplicate (a model merged with something that already
+  contains it); of the merges whose base could be judged, 44% use the closest common ancestor
+  and 26% use a sibling or an older ancestor, mostly neutralised by mergekit's default
+  normalisation.
 
 ## Files
 
@@ -85,7 +90,9 @@ instant. Exit codes: 0 OK/INFO, 1 WARNING, 2 WRONG_BASE, 3 TOO_FAR.
 | `predictors.py` | Pre-merge predictors (principal angles, variance score, cosine, distance) |
 | `run_plan.py`, `plans/` | Resumable experiment runner and every experiment we ran |
 | `examples/` | mergekit configs for the four cases above |
-| `tests/` | 47 tests, no GPU or downloads needed: `python -m pytest tests` |
+| `audit_hub.py` | Audit of public mergekit merges on Hugging Face (text only, no weights) |
+| `tests/` | 58 tests, no GPU or downloads needed: `python -m pytest tests` |
+| `docs/AUDIT.md`, `docs/audit_results.csv` | Audit results and the per-merge table |
 | `docs/EXPERIMENTS.md` | How we ran everything on Kaggle |
 
 ## Related work
@@ -93,8 +100,11 @@ instant. Exit codes: 0 OK/INFO, 1 WARNING, 2 WRONG_BASE, 3 TOO_FAR.
 Recovering model family trees from weights: MoTHer (Horwitz et al., ICLR 2025),
 modelDNA (arXiv 2607.10617), Model Atlas (arXiv 2503.10633). Grouping a model zoo, merging
 within groups and routing between them: Model-GLUE (arXiv 2410.05357). Predicting merge
-collapse with a fixed base: arXiv 2610.03199, arXiv 2603.09463. To our knowledge, none of
-these uses model lineage to choose the base for merging, which is the focus of this project.
+collapse with a fixed base: arXiv 2610.03199, arXiv 2603.09463. Similarity between task vectors
+from a fixed base ("model kinship"): arXiv 2410.12613. Drawing a merge's family tree from its
+model card: Model Family Tree (Hugging Face Space by mlabonne). To our knowledge, none of these
+uses model lineage to choose the base for merging, or checks public merges for a wrong base or
+hidden duplicates, which is the focus of this project.
 
 ## Licence
 
