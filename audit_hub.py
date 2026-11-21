@@ -26,6 +26,8 @@ Verdicts (task-vector methods with 2+ ingredients):
                      (re-uploads/mirrors of the same base also land here; see notes)
   NO_COMMON_ANCESTOR metadata gives the ingredients no shared ancestor
   UNKNOWN            missing metadata for an ingredient or the base
+  LOCAL_PATHS        the recipe names local folders that cannot be matched to Hub models
+                     ('./Org/Model', 'E:\\dir\\Org_Model' and 'models--Org--Model' are matched)
   INCOMPLETE_LINEAGE an ingredient's card lists no parent (a true root or missing
                      metadata), so the verdict cannot be judged; excluded from percentages
 Quantized copies (GGUF, EXL2, AWQ, ...) inherit the original's `mergekit` tag; they are followed
@@ -36,6 +38,10 @@ UNPARSEABLE.
 Lineage loops (any method, 2+ ingredients): one ingredient is a (partial) ancestor of another,
 e.g. merging A with a merge that already contains A, so A's contribution enters twice. A
 correct base does not fix this. Partial ancestry includes every parent of a merge.
+
+Links that cards leave out are filled in two transparent ways (noted per row): an official
+instruct/chat model is linked to its base by name when that base exists (Meta, Mistral, Google, ...),
+and a parentless re-upload is linked to the official model of the same name.
 
 Card metadata is self-reported, so this is a screen. Stage 2 checks a sample with the
 weight-based Base Checker (base_checker.py), using the CCA found here as the candidate.
@@ -126,7 +132,12 @@ def parse_recipe(text):
         return None
     method = str(cfg.get("merge_method", "")).strip().lower()
     glob = cfg.get("parameters") if isinstance(cfg.get("parameters"), dict) else {}
-    base, base_note = clean_ref(cfg.get("base_model")) if cfg.get("base_model") is not None else (None, "")
+    base_raw = cfg.get("base_model")
+    if isinstance(base_raw, dict):
+        base_raw = base_raw.get("model")
+    base, base_note = clean_ref(base_raw) if base_raw is not None else (None, "")
+    if base is None:
+        base_note = ""
     raw = []
     if isinstance(cfg.get("models"), list):
         for e in cfg["models"]:
@@ -141,25 +152,32 @@ def parse_recipe(text):
         fmt = "slices"
     else:
         fmt = "none"
-    seen, ingredients, notes = {}, [], []
+    seen, ingredients, notes, unresolved = {}, [], [], []
     for ref, params in raw:
         rid, note = clean_ref(ref)
-        if note:
-            notes.append(note)
-        if rid is None or rid == base:
-            continue
         w = _num(params.get("weight")) if isinstance(params, dict) else None
         if w is None:
             w = _num(glob.get("weight"))
+        w = 1.0 if w is None else w
+        if rid is None:
+            raw_ref = ref.get("model") if isinstance(ref, dict) else ref
+            if isinstance(raw_ref, str) and raw_ref.strip() and raw_ref not in [u for u, _ in unresolved]:
+                unresolved.append((raw_ref.strip(), w))
+            continue
+        if note:
+            notes.append(note)
+        if rid == base:
+            continue
         if rid not in seen:
             seen[rid] = len(ingredients)
-            ingredients.append([rid, 1.0 if w is None else w])
+            ingredients.append([rid, w])
     normalize = glob.get("normalize")
     if normalize is None:
         normalize = method == "linear"
     return {"method": method, "kind": TASK_VECTOR.get(method), "base": base, "base_note": base_note,
-            "ingredients": ingredients, "normalize": bool(normalize), "format": fmt, "notes": notes,
-            "slices": fmt == "slices"}
+            "base_unresolved": base_raw.strip() if base is None and isinstance(base_raw, str) and base_raw.strip() else None,
+            "ingredients": ingredients, "unresolved": unresolved, "normalize": bool(normalize),
+            "format": fmt, "notes": notes, "slices": fmt == "slices"}
 
 
 YAMLISH = re.compile(r"^\s*$|^\s*#|^\s*-\s|^\s*[\w.@/+-]+\s*:")
@@ -213,12 +231,76 @@ def parents_from_meta(meta):
     return rel, lst
 
 
+OFFICIAL_ORGS = ("meta-llama", "mistralai", "google", "qwen", "microsoft", "nvidia", "deepseek-ai",
+                 "ibm-granite", "tiiuae", "01-ai", "internlm", "allenai", "huggingfacetb")
+MIRROR_ORGS = ("meta-llama", "mistralai", "google", "qwen", "microsoft")
+
+
+def local_path_candidates(raw):
+    """Hugging Face ids a local mergekit path may stand for, most likely first:
+    './Org/Model' -> org/model; 'E:\\dir\\Org_Model' -> org/model; '.../models--Org--Model/...' -> org/model."""
+    p = raw.strip().replace("\\", "/").strip("/")
+    p = re.sub(r"^[A-Za-z]:/", "", p)
+    out = []
+    m = re.search(r"models--([^/]+?)--([^/]+)", p)
+    if m:
+        out.append(f"{m.group(1)}/{m.group(2)}")
+    parts = [x for x in p.split("/") if x not in ("", ".", "..")]
+    if len(parts) >= 2:
+        out.append("/".join(parts[-2:]))
+    if parts:
+        last = parts[-1]
+        for sep in ("--", "_"):
+            if sep in last:
+                a, b = last.split(sep, 1)
+                if a and b:
+                    out.append(f"{a}/{b}")
+    seen, res = set(), []
+    for c in out:
+        c = c.lower()
+        if c.count("/") == 1 and " " not in c and c not in seen:
+            seen.add(c)
+            res.append(c)
+    return res
+
+
+def resolve_local(raw, client):
+    for c in local_path_candidates(raw):
+        if client.meta(c) is not None:
+            return c
+    return None
+
+
+def official_parent(repo, client):
+    """Links model cards often leave out, inferred by name and kept only if the model exists:
+    an official instruct/chat model -> its base (e.g. meta-llama/Meta-Llama-3-8B-Instruct ->
+    meta-llama/Meta-Llama-3-8B; google/gemma-3-27b-it -> google/gemma-3-27b-pt), and a re-upload
+    with no listed parent -> the official model of the same name (NousResearch/Meta-Llama-3-8B ->
+    meta-llama/Meta-Llama-3-8B). Returns (parent, note) or (None, None)."""
+    org, _, name = repo.partition("/")
+    if org in OFFICIAL_ORGS:
+        cands = []
+        for pat, rep in ((r"-instruct(?=$|-)", ""), (r"-instruct(?=$|-)", "-base"), (r"-it(?=$|-)", "-pt"),
+                         (r"-it(?=$|-)", ""), (r"-chat(?=$|-)", "")):
+            if re.search(pat, name):
+                cands.append(f"{org}/{re.sub(pat, rep, name, count=1)}")
+        for c in dict.fromkeys(cands):
+            if c != repo and client.meta(c) is not None:
+                return c, f"official base inferred: {repo} -> {c}"
+        return None, None
+    for off in MIRROR_ORGS:
+        c = f"{off}/{name}"
+        if client.meta(c) is not None:
+            return c, f"re-upload of {c}"
+    return None, None
+
+
 class Ancestry:
     """ancestors(repo) -> {ancestor: distance}, repo itself at 0; None if repo metadata is missing."""
 
     def __init__(self, client, depth=6):
         self.client, self.depth, self.memo = client, depth, {}
-        self.parent_memo, self.from_recipe = {}, set()
+        self.parent_memo, self.from_recipe, self.inferred = {}, set(), {}
 
     def parents(self, repo, meta):
         """(relation, parents) from card metadata; if the card lists none, from the model's own
@@ -234,6 +316,11 @@ class Ancestry:
                 if found:
                     rel, parents = ("merge" if len(found) > 1 else "finetune"), found
                     self.from_recipe.add(repo)
+        if not parents:
+            p, note = official_parent(repo, self.client)
+            if p:
+                rel, parents = "finetune", [p]
+                self.inferred[repo] = note
         self.parent_memo[repo] = (rel, parents)
         return rel, parents
 
@@ -316,6 +403,23 @@ def audit_one(repo, client, ancestry):
     if r is None:
         row["verdict"] = "UNPARSEABLE"
         return row
+    local_notes, left = [], []
+    for raw_ref, w in r["unresolved"]:
+        c = resolve_local(raw_ref, client)
+        if c and c != r["base"] and c not in [i for i, _ in r["ingredients"]]:
+            r["ingredients"].append([c, w])
+            local_notes.append(f"local path {raw_ref!r} -> {c}")
+        elif not c:
+            left.append(raw_ref)
+    if r["base"] is None and r["base_unresolved"]:
+        c = resolve_local(r["base_unresolved"], client)
+        if c:
+            r["base"] = c
+            r["ingredients"] = [x for x in r["ingredients"] if x[0] != c]
+            local_notes.append(f"local base path {r['base_unresolved']!r} -> {c}")
+        else:
+            left.append(r["base_unresolved"])
+    r["notes"] += local_notes + ([f"unresolved local paths: {', '.join(repr(x) for x in left[:4])}"] if left else [])
     ing = [i for i, _ in r["ingredients"]]
     wsum = sum(w for _, w in r["ingredients"])
     counted = 1.0 if r["normalize"] else wsum
@@ -330,6 +434,9 @@ def audit_one(repo, client, ancestry):
         row["lineage_loops"] = "; ".join(f"{a} > {d}" for a, d in loops) if loops else ""
     if r["kind"] is None:
         row["verdict"] = "NOT_TASK_VECTOR"
+        return row
+    if left:
+        row["verdict"] = "LOCAL_PATHS"           # some ingredients or the base are unresolvable local folders
         return row
     if len(ing) < 2:
         row["verdict"] = "SINGLE_INGREDIENT"
@@ -359,6 +466,9 @@ def audit_one(repo, client, ancestry):
             row["notes"] = (row["notes"] + "; " if row["notes"] else "") + f"declared base is a re-upload of {base}"
     base_in_all = all(base in a for a in ancs)
     row["base_distance"] = max(a[base] for a in ancs) if base_in_all else ""
+    inf = sorted(n for a, n in ancestry.inferred.items() if any(a in an for an in ancs) or a == r["base"])
+    if inf:
+        row["notes"] = (row["notes"] + "; " if row["notes"] else "") + "; ".join(inf[:4])
     via = sorted(a for a in ancestry.from_recipe if any(a in an for an in ancs))
     if via:
         row["notes"] = (row["notes"] + "; " if row["notes"] else "") + "parents read from recipe: " + " ".join(via[:5])
@@ -527,7 +637,8 @@ def summarise(rows, out, sort, limit):
               f"high risk (summing method, weights > 1): {len(high)}",
               f"- OK: {v.get('OK', 0)} ({pct(v.get('OK', 0), len(judged))}); base not an ancestor: "
               f"{v.get('BASE_NOT_ANCESTOR', 0)}; no common ancestor: {v.get('NO_COMMON_ANCESTOR', 0)}",
-              f"- Not judged: incomplete lineage {v.get('INCOMPLETE_LINEAGE', 0)}, missing metadata {v.get('UNKNOWN', 0)}; "
+              f"- Not judged: incomplete lineage {v.get('INCOMPLETE_LINEAGE', 0)}, missing metadata {v.get('UNKNOWN', 0)}, "
+              f"unresolvable local paths {v.get('LOCAL_PATHS', 0)}; "
               f"no published recipe {v.get('NO_CONFIG', 0)}; quantized copies followed back: "
               f"{sum(int(r.get('listed_copies') or 0) for r in rows)}"]
     checked = [r for r in rows if r.get("loops_checked")]
