@@ -92,15 +92,33 @@ def _num(v):
     return None
 
 
+def load_merge_doc(text):
+    """The final merge stage in a recipe text, or None. Handles single documents, lists of
+    stages, several YAML documents separated by '---' (multi-stage mergekit recipes), and
+    Windows line endings."""
+    if not isinstance(text, str):
+        return None
+    text = text.replace("\r\n", "\n").replace("\t", "  ")
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError:
+        docs = []
+        for piece in re.split(r"^---[ \t]*$", text, flags=re.M):
+            try:
+                docs.append(yaml.safe_load(piece))
+            except yaml.YAMLError:
+                continue
+    flat = []
+    for d in docs:
+        flat.extend(d if isinstance(d, list) else [d])
+    stages = [d for d in flat if isinstance(d, dict) and "merge_method" in d]
+    return stages[-1] if stages else None
+
+
 def parse_recipe(text):
     """mergekit YAML text -> dict or None. Supports the `models` and `slices` formats."""
-    try:
-        cfg = yaml.safe_load(text)
-    except yaml.YAMLError:
-        return None
-    if isinstance(cfg, list) and cfg and isinstance(cfg[-1], dict):
-        cfg = cfg[-1]                                  # multi-stage recipes: the final merge
-    if not isinstance(cfg, dict) or "merge_method" not in cfg:
+    cfg = load_merge_doc(text)
+    if cfg is None:
         return None
     method = str(cfg.get("merge_method", "")).strip().lower()
     glob = cfg.get("parameters") if isinstance(cfg.get("parameters"), dict) else {}
@@ -140,11 +158,27 @@ def parse_recipe(text):
             "slices": fmt == "slices"}
 
 
+YAMLISH = re.compile(r"^\s*$|^\s*#|^\s*-\s|^\s*[\w.@/+-]+\s*:")
+
+
 def recipe_from_readme(text):
-    for block in re.findall(r"```(?:ya?ml)?\s*\n(.*?)```", text or "", flags=re.S):
-        if "merge_method" in block:
-            r = parse_recipe(block)
-            if r is not None:
+    """A mergekit recipe inside a README: a fenced block (``` or ~~~, any language tag) that
+    contains merge_method, else the run of YAML-looking lines around a 'merge_method:' line."""
+    text = (text or "").replace("\r\n", "\n")
+    for block in re.findall(r"(?:```|~~~)[^\n]*\n(.*?)(?:```|~~~)", text, flags=re.S):
+        if "merge_method" in block and parse_recipe(block) is not None:
+            return block
+    lines = text.split("\n")
+    for k, line in enumerate(lines):
+        if re.match(r"^\s*merge_method\s*:", line):
+            a = k
+            while a > 0 and YAMLISH.match(lines[a - 1]) and not lines[a - 1].lstrip().startswith(("```", "~~~")):
+                a -= 1
+            b = k
+            while b + 1 < len(lines) and YAMLISH.match(lines[b + 1]):
+                b += 1
+            block = "\n".join(lines[a:b + 1])
+            if parse_recipe(block) is not None:
                 return block
     return None
 
@@ -380,13 +414,17 @@ class HubClient:
         if repo in self.cache["recipe"]:
             return self.cache["recipe"][repo]
         text = None
-        for fname in ("mergekit_config.yml", "mergekit_config.yaml", "README.md"):
+        for fname in ("mergekit_config.yml", "mergekit_config.yaml", "merge.yml", "merge.yaml",
+                      "config.yaml", "README.md"):
             try:
                 path = self._retry(lambda: self.hh.hf_hub_download(repo, fname))
             except Exception:
                 continue
             body = Path(path).read_text(errors="replace")
-            text = body if fname != "README.md" else recipe_from_readme(body)
+            if fname == "README.md":
+                text = recipe_from_readme(body)
+            else:
+                text = body if parse_recipe(body) is not None else None   # e.g. config.yaml may be unrelated
             if text:
                 break
         self.cache["recipe"][repo] = text
