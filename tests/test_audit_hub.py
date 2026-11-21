@@ -232,3 +232,57 @@ def test_parents_read_from_recipe_when_card_lists_none():
         META.pop("h/merged-nocard", None)
         RECIPES.pop("h/merged-nocard", None)
         RECIPES.pop("m/via-recipe", None)
+
+
+def test_local_paths_resolved_or_labelled():
+    assert A.local_path_candidates("./A/qwq") == ["a/qwq"]
+    assert "sao10k/mn-12b-lyra-v1" in A.local_path_candidates("E:\\mergekit\\Sao10K_MN-12B-Lyra-v1")
+    assert A.local_path_candidates("/root/.cache/huggingface/hub/models--C--biz/snapshots/abc")[0] == "c/biz"
+    assert A.local_path_candidates("deity") == []
+    RECIPES["m/local-ok"] = recipe("task_arithmetic", "./Qwen/Qwen2.5-1.5B", ["./a/qwq", "E:\\merge\\b_mbpp", "models--c--biz"])
+    RECIPES["m/local-bad"] = recipe("dare_ties", "Qwen/Qwen2.5-1.5B", ["deity", "hero", "a/qwq"])
+    try:
+        row = run("m/local-ok")
+        assert row["verdict"] == "DOUBLE_COUNT" and row["declared_base"] == BASE
+        assert row["ingredients"] == "a/qwq b/mbpp c/biz" and "local path './a/qwq' -> a/qwq" in row["notes"]
+        bad = run("m/local-bad")
+        assert bad["verdict"] == "LOCAL_PATHS" and "unresolved local paths" in bad["notes"]
+    finally:
+        RECIPES.pop("m/local-ok", None)
+        RECIPES.pop("m/local-bad", None)
+
+
+def test_official_links_and_reuploads_inferred():
+    extra = {
+        "meta-llama/meta-llama-3-8b": {"tags": []},
+        "meta-llama/meta-llama-3-8b-instruct": {"tags": []},          # Meta's card lists no base
+        "nousresearch/meta-llama-3-8b": {"tags": []},                 # re-uploads with no parent listed
+        "nousresearch/meta-llama-3-8b-instruct": {"tags": []},
+        "x/ft1": ft("nousresearch/meta-llama-3-8b-instruct"),
+        "x/ft2": ft("meta-llama/meta-llama-3-8b-instruct"),
+        "x/ft3": ft("meta-llama/meta-llama-3-8b"),
+        "google/gemma-3-27b-pt": {"tags": []}, "google/gemma-3-27b-it": {"tags": []},
+        "google/gemma-2-9b": {"tags": []}, "google/gemma-2-9b-it": {"tags": []},
+        "google/gemma-2-9b-italian": {"tags": []},                    # '-it' inside a word is not instruct
+    }
+    META.update(extra)
+    RECIPES["m/llama-dc"] = recipe("task_arithmetic", "NousResearch/Meta-Llama-3-8B", ["x/ft1", "x/ft2"])
+    RECIPES["m/llama-ok"] = recipe("ties", "NousResearch/Meta-Llama-3-8B", ["x/ft1", "x/ft3"])
+    try:
+        c = FakeClient()
+        assert A.official_parent("meta-llama/meta-llama-3-8b-instruct", c)[0] == "meta-llama/meta-llama-3-8b"
+        assert A.official_parent("google/gemma-3-27b-it", c)[0] == "google/gemma-3-27b-pt"
+        assert A.official_parent("google/gemma-2-9b-it", c)[0] == "google/gemma-2-9b"
+        assert A.official_parent("google/gemma-2-9b-italian", c) == (None, None)
+        assert A.official_parent("nousresearch/meta-llama-3-8b-instruct", c)[0] == "meta-llama/meta-llama-3-8b-instruct"
+        assert A.official_parent("meta-llama/meta-llama-3-8b", c) == (None, None)     # a true root stays a root
+        row = run("m/llama-dc")        # both fine-tunes descend from the Instruct model; base is the pretrained one
+        assert row["verdict"] == "DOUBLE_COUNT" and row["closest_common_ancestor"] == "meta-llama/meta-llama-3-8b-instruct"
+        assert "official base inferred" in row["notes"] and "re-upload of meta-llama/meta-llama-3-8b" in row["notes"]
+        ok = run("m/llama-ok")         # one fine-tune from Instruct, one from the base: the base is right
+        assert ok["verdict"] == "OK" and ok["closest_common_ancestor"] == "meta-llama/meta-llama-3-8b"
+    finally:
+        for k in extra:
+            META.pop(k, None)
+        RECIPES.pop("m/llama-dc", None)
+        RECIPES.pop("m/llama-ok", None)
