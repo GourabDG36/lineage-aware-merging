@@ -171,3 +171,22 @@ def test_lineage_loops():
     finally:
         for k in ("m/loop-inst", "m/loop-merge", "m/loop-slerp"):
             RECIPES.pop(k, None)
+
+
+def test_more_recipe_formats():
+    multi = ("name: stage1\nmerge_method: ties\nbase_model: x/base\nmodels:\n  - model: a/one\n  - model: a/two\n"
+             "---\nname: final\nmerge_method: task_arithmetic\nbase_model: x/base\nmodels:\n  - model: stage1\n  - model: a/three\n")
+    r = A.parse_recipe(multi)                       # several YAML documents: the final stage counts
+    assert r["method"] == "task_arithmetic" and [i for i, _ in r["ingredients"]] == ["a/three"]
+    crlf = "merge_method: ties\r\nbase_model: x/base\r\nmodels:\r\n  - model: a/one\r\n  - model: a/two\r\n"
+    assert [i for i, _ in A.parse_recipe(crlf)["ingredients"]] == ["a/one", "a/two"]
+    tilde = "Intro\n\n~~~yml\nmerge_method: dare_ties\nbase_model: x/base\nmodels:\n  - model: a/one\n  - model: a/two\n~~~\n"
+    assert A.parse_recipe(A.recipe_from_readme(tilde))["method"] == "dare_ties"
+    lang = "```YAML title=config\nmerge_method: ties\nbase_model: x/base\nmodels:\n  - model: a/one\n  - model: a/two\n```"
+    assert A.parse_recipe(A.recipe_from_readme(lang))["method"] == "ties"
+    bare = ("# Card\n\nThe following configuration was used:\n\nmodels:\n  - model: a/one\n    parameters:\n"
+            "      weight: 0.5\n  - model: a/two\nmerge_method: task_arithmetic\nbase_model: x/base\ndtype: bfloat16\n\nThanks!\n")
+    r = A.parse_recipe(A.recipe_from_readme(bare))  # no code fence at all
+    assert r["method"] == "task_arithmetic" and len(r["ingredients"]) == 2
+    assert A.recipe_from_readme("# nothing here\n") is None
+    assert A.load_merge_doc("a: [1, 2\n") is None and A.load_merge_doc(None) is None
