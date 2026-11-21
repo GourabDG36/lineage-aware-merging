@@ -94,7 +94,7 @@ def test_verdicts_cover_every_case():
         "m/cardonly": ("DOUBLE_COUNT", "lower"), "m/unknown": ("UNKNOWN", None),
         "m/slerp": ("NOT_TASK_VECTOR", None), "m/single": ("SINGLE_INGREDIENT", None),
         "m/refs": ("OK", None), "m/multistage": ("DOUBLE_COUNT", "lower"),
-        "m/no-common": ("NO_COMMON_ANCESTOR", None), "m/readme": ("DOUBLE_COUNT", "lower"),
+        "m/no-common": ("INCOMPLETE_LINEAGE", None), "m/readme": ("DOUBLE_COUNT", "lower"),
         "m/noconfig": ("NO_CONFIG", None),
     }
     for repo, (verdict, risk) in expect.items():
@@ -136,9 +136,9 @@ def test_parents_from_meta():
 def test_summary_files(tmp_path):
     rows = [run(r) for r in RECIPES]
     v = A.summarise(rows, tmp_path, "downloads", 99)
-    assert v["DOUBLE_COUNT"] == 9 and v["OK"] == 4
+    assert v["DOUBLE_COUNT"] == 9 and v["OK"] == 4 and v["INCOMPLETE_LINEAGE"] == 1
     text = (tmp_path / "summary.md").read_text()
-    assert "DOUBLE_COUNT: 9 of 15" in text and "high risk" in text
+    assert "DOUBLE_COUNT: 9 of 14" in text and "incomplete lineage 1" in text and "high risk" in text
     with (tmp_path / "audit.csv").open() as f:
         assert len(list(csv.DictReader(f))) == len(RECIPES)
     with (tmp_path / "verify_candidates.csv").open() as f:
@@ -190,3 +190,25 @@ def test_more_recipe_formats():
     assert r["method"] == "task_arithmetic" and len(r["ingredients"]) == 2
     assert A.recipe_from_readme("# nothing here\n") is None
     assert A.load_merge_doc("a: [1, 2\n") is None and A.load_merge_doc(None) is None
+
+
+def test_quantized_copies_followed_to_the_original_merge():
+    extra = {
+        "mradermacher/dc-high-gguf": {"tags": ["base_model:quantized:m/dc-high"]},
+        "bartowski/dc-high-gguf": {"tags": [], "base_model": "m/dc-high"},          # name says GGUF, no relation tag
+        "someone/dc-high-exl2-4bpw": {"tags": [], "base_model": "mradermacher/dc-high-gguf"},  # copy of a copy
+        "x/real-finetune": {"tags": [], "base_model": "m/dc-high"},                  # a fine-tune, not a copy
+    }
+    META.update(extra)
+    try:
+        c = FakeClient()
+        c.meta = lambda r: {"tags": ["mergekit"], "downloads": 1} if r.startswith("m/") else META.get(r)
+        assert A.resolve_source("mradermacher/dc-high-gguf", c) == ("m/dc-high", ["mradermacher/dc-high-gguf"])
+        assert A.resolve_source("bartowski/dc-high-gguf", c)[0] == "m/dc-high"
+        assert A.resolve_source("someone/dc-high-exl2-4bpw", c)[0] == "m/dc-high"
+        assert A.resolve_source("x/real-finetune", c)[0] == "x/real-finetune"
+        order, copies = A.plan_sources(["mradermacher/dc-high-gguf", "m/ok", "bartowski/dc-high-gguf", "m/dc-high"], c)
+        assert order == ["m/dc-high", "m/ok"] and len(copies["m/dc-high"]) == 3
+    finally:
+        for k in extra:
+            META.pop(k, None)
