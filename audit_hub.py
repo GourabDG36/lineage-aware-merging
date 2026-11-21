@@ -26,6 +26,10 @@ Verdicts (task-vector methods with 2+ ingredients):
                      (re-uploads/mirrors of the same base also land here; see notes)
   NO_COMMON_ANCESTOR metadata gives the ingredients no shared ancestor
   UNKNOWN            missing metadata for an ingredient or the base
+  INCOMPLETE_LINEAGE an ingredient's card lists no parent (a true root or missing
+                     metadata), so the verdict cannot be judged; excluded from percentages
+Quantized copies (GGUF, EXL2, AWQ, ...) inherit the original's `mergekit` tag; they are followed
+back to the original merge (card base_model / quantized relation) and each merge is audited once.
 Other rows: NOT_TASK_VECTOR (linear, slerp, passthrough ...), SINGLE_INGREDIENT, NO_CONFIG,
 UNPARSEABLE.
 
@@ -337,7 +341,12 @@ def audit_one(repo, client, ancestry):
             row["notes"] = (row["notes"] + "; " if row["notes"] else "") + f"declared base is a re-upload of {base}"
     base_in_all = all(base in a for a in ancs)
     row["base_distance"] = max(a[base] for a in ancs) if base_in_all else ""
-    if cca is None:
+    no_parents = [i for i, a in zip(ing, ancs) if len(a) == 1]
+    if no_parents and (cca is None or not base_in_all):
+        # an ingredient whose card lists no parent: a true root or missing metadata; cannot judge
+        row["verdict"] = "INCOMPLETE_LINEAGE"
+        row["notes"] = (row["notes"] + "; " if row["notes"] else "") + "no parent listed: " + " ".join(no_parents)
+    elif cca is None:
         row["verdict"] = "NO_COMMON_ANCESTOR"
     elif cca == base:
         row["verdict"] = "OK"
@@ -431,12 +440,41 @@ class HubClient:
         return text
 
 
+QUANT_NAME = re.compile(r"gguf|exl2|exl3|awq|gptq|mlx|bnb|imatrix|\d(?:\.\d+)?bpw|\d+-?bit|int[48]|fp8|-quant", re.I)
+
+
+def resolve_source(repo, client, hops=4):
+    """Follow quantized copies (GGUF, EXL2, AWQ, ...) back to the model they were made from.
+    Returns (source repo, chain of copies)."""
+    chain, cur = [], repo
+    for _ in range(hops):
+        rel, parents = parents_from_meta(client.meta(cur))
+        if len(parents) == 1 and (rel == "quantized" or QUANT_NAME.search(cur)):
+            chain.append(cur)
+            cur = parents[0]
+        else:
+            break
+    return cur, chain
+
+
+def plan_sources(listed, client):
+    """Unique merges to audit, in listing order, with the listed copies that point to each."""
+    order, copies = [], {}
+    for repo in listed:
+        src, _ = resolve_source(repo, client)
+        if src not in copies:
+            copies[src] = []
+            order.append(src)
+        copies[src].append(repo)
+    return order, copies
+
+
 # ------------------------------------------------------------------ outputs
 
 FIELDS = ["repo", "verdict", "risk", "method", "kind", "declared_base", "closest_common_ancestor",
           "cca_distance", "base_distance", "n_ingredients", "ingredients", "weights_sum", "normalize",
           "shared_update_counted", "loops_checked", "n_loops", "lineage_loops",
-          "format", "downloads", "likes", "params", "created_at", "notes"]
+          "format", "downloads", "likes", "params", "created_at", "listed_copies", "listed_as", "notes"]
 
 
 def pct(a, b):
@@ -456,7 +494,8 @@ def summarise(rows, out, sort, limit):
     tv = [r for r in rows if r.get("kind") not in (None, "none") and r["verdict"] not in ("NO_CONFIG", "UNPARSEABLE")]
     lines = [
         "# Audit of public mergekit merges on Hugging Face", "",
-        f"Sample: {len(rows)} models tagged `mergekit`, sorted by {sort} (limit {limit}). "
+        f"Sample: {len(rows)} distinct merges from the top {limit} models tagged `mergekit` by {sort} "
+        "(quantized copies such as GGUF followed back to the original merge). "
         "Ancestry from model-card metadata (self-reported); see notes in audit.csv.", "",
         "| Verdict | Count |", "|---|---|"]
     lines += [f"| {k} | {n} |" for k, n in v.most_common()]
@@ -466,7 +505,10 @@ def summarise(rows, out, sort, limit):
               f"- **DOUBLE_COUNT: {len(dc)} of {len(judged)} ({pct(len(dc), len(judged))})**, of which "
               f"high risk (summing method, weights > 1): {len(high)}",
               f"- OK: {v.get('OK', 0)} ({pct(v.get('OK', 0), len(judged))}); base not an ancestor: "
-              f"{v.get('BASE_NOT_ANCESTOR', 0)}; no common ancestor: {v.get('NO_COMMON_ANCESTOR', 0)}"]
+              f"{v.get('BASE_NOT_ANCESTOR', 0)}; no common ancestor: {v.get('NO_COMMON_ANCESTOR', 0)}",
+              f"- Not judged: incomplete lineage {v.get('INCOMPLETE_LINEAGE', 0)}, missing metadata {v.get('UNKNOWN', 0)}; "
+              f"no published recipe {v.get('NO_CONFIG', 0)}; quantized copies followed back: "
+              f"{sum(int(r.get('listed_copies') or 0) for r in rows)}"]
     checked = [r for r in rows if r.get("loops_checked")]
     looped = [r for r in checked if r.get("n_loops")]
     tv_checked = [r for r in checked if r.get("kind") not in (None, "none")]
@@ -528,17 +570,24 @@ def main(argv=None):
         order_file.write_text(json.dumps(merges))
     print(f"{len(merges)} merged models", flush=True)
     ancestry = Ancestry(client, depth=args.depth)
+    print("Following quantized copies back to the original merges ...", flush=True)
+    sources, copies = plan_sources(merges, client)
+    client.save()
+    print(f"{len(merges)} listed models -> {len(sources)} distinct merges to audit", flush=True)
     rows, t0 = [], time.time()
-    for k, repo in enumerate(merges, 1):
+    for k, repo in enumerate(sources, 1):
         if args.summarise_only and repo not in client.cache["recipe"]:
             continue
         try:
-            rows.append(audit_one(repo, client, ancestry))
+            row = audit_one(repo, client, ancestry)
         except Exception as e:                           # never lose a long run to one bad repo
-            rows.append({"repo": repo, "verdict": "ERROR", "notes": str(e)[:200]})
+            row = {"repo": repo, "verdict": "ERROR", "notes": str(e)[:200]}
+        row["listed_copies"] = len([c for c in copies[repo] if c != repo])
+        row["listed_as"] = " ".join(copies[repo][:3])
+        rows.append(row)
         if k % 25 == 0:
             client.save()
-            print(f"  {k}/{len(merges)}  {time.time() - t0:.0f}s  Hub calls {client.calls}", flush=True)
+            print(f"  {k}/{len(sources)}  {time.time() - t0:.0f}s  Hub calls {client.calls}", flush=True)
     client.save()
     summarise(rows, out, args.sort, args.limit)
 
