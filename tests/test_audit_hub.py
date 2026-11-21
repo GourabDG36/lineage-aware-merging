@@ -212,3 +212,23 @@ def test_quantized_copies_followed_to_the_original_merge():
     finally:
         for k in extra:
             META.pop(k, None)
+
+
+def test_parents_read_from_recipe_when_card_lists_none():
+    META["h/merged-nocard"] = {"tags": ["mergekit"]}             # a community merge whose card lists no parent
+    RECIPES["h/merged-nocard"] = recipe("ties", "Qwen/Qwen2.5-1.5B-Instruct", ["a/qwq", "b/mbpp"])
+    RECIPES["m/via-recipe"] = recipe("task_arithmetic", "Qwen/Qwen2.5-1.5B", ["h/merged-nocard", "c/biz"])
+    try:
+        c = FakeClient()
+        c.meta = lambda r: {"tags": ["mergekit"], "downloads": 1} if r.startswith("m/") else META.get(r)
+        anc = A.Ancestry(c)
+        a = anc.ancestors("h/merged-nocard")
+        assert INST in a and BASE in a and "a/qwq" not in a      # full ancestry = what all its parents share
+        assert {"a/qwq", "b/mbpp", INST} <= anc.any_ancestors("h/merged-nocard")
+        row = A.audit_one("m/via-recipe", c, anc)
+        assert row["verdict"] == "DOUBLE_COUNT" and row["closest_common_ancestor"] == INST
+        assert "parents read from recipe: h/merged-nocard" in row["notes"]
+    finally:
+        META.pop("h/merged-nocard", None)
+        RECIPES.pop("h/merged-nocard", None)
+        RECIPES.pop("m/via-recipe", None)
